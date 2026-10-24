@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/.venv
+**/__pycache__
+*.db
+tests
+**/dist
+README.md
+# шаблон конфига nginx нужен только docker-compose, в боевой образ он не попадает
+frontend/templates
