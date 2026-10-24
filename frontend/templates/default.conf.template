@@ -2,10 +2,9 @@ server {
     listen 80;
     root /usr/share/nginx/html;
 
-    # Запросы /api/... nginx пересылает в контейнер бэкенда.
-    # ${API_HOST} подставляется при старте: backend (Python) или backend-node (Node.js)
+    # Запросы /api/... nginx пересылает в контейнер бэкенда
     location /api/ {
-        proxy_pass http://${API_HOST}:8000;
+        proxy_pass http://backend:8000;
         proxy_set_header Host $host;
     }
 

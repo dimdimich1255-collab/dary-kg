@@ -9,19 +9,16 @@
 
 | Часть | Технология |
 |---|---|
-| Бэкенд №1 | Python + FastAPI + SQLAlchemy (`backend/`) |
-| Бэкенд №2 | Node.js + Express + node:sqlite / pg (`backend-node/`) |
+| Бэкенд | Python + FastAPI + SQLAlchemy (`backend/`) |
 | База | SQLite (по умолчанию) или PostgreSQL (в Docker) |
-| Фронтенд №1 | vanilla JS, HTML, CSS (`frontend/`) |
-| Фронтенд №2 | React 18 + Vite (`frontend-react/`) |
-| Фронтенд №3 | Vue 3 + Vite (`frontend-vue/`) |
-| Фронтенд №4 | Angular 20 (`frontend-angular/`) |
-| Тесты | Playwright |
-| Запуск | Docker Compose (postgres + 2 бэкенда + nginx) |
+| Фронтенд | vanilla JS, HTML, CSS (`frontend/`) |
+| Тесты | Playwright (`tests/`) |
+| Запуск | Docker Compose (postgres + backend + nginx) |
+
+> Версии с бэкендом на Node.js и фронтендами на React, Vue и Angular лежат в ветке
+> `extra-stacks`: `git switch extra-stacks`. Они проходят те же тесты.
 
 ## Запуск без Docker (SQLite)
-
-Python:
 
 ```bash
 cd backend
@@ -30,33 +27,8 @@ python -m venv .venv
 .venv\Scripts\uvicorn app.main:app --reload
 ```
 
-Node.js (нужен Node 22.13 или новее, SQLite в нём встроен):
-
-```bash
-cd backend-node
-npm install
-npm run dev
-```
-
 Открыть http://localhost:8000. База создастся сама в файле `dary.db` и заполнится демо-данными.
-Документация API (только у Python): http://localhost:8000/docs
-
-React (бэкенд должен быть запущен на 8000):
-
-```bash
-cd frontend-react
-npm install
-npm run dev
-```
-
-Открыть http://localhost:5173. Vite сам пересылает `/api` в бэкенд. Если бэкенд на другом порту:
-`API_TARGET=http://localhost:8002 npm run dev`.
-
-Vue запускается так же из папки `frontend-vue` (`npm install`, `npm run dev`) и открывается на http://localhost:5175.
-
-Angular: в папке `frontend-angular` выполнить `npm install`, потом `npm start`. Сайт откроется на http://localhost:5177.
-Кеш сборки Angular отключён в `angular.json` (`cli.cache.enabled: false`): на этом компьютере его
-библиотека lmdb падала с ошибкой 0xC0000005.
+Документация API: http://localhost:8000/docs
 
 ## Запуск в Docker (PostgreSQL)
 
@@ -66,32 +38,12 @@ Angular: в папке `frontend-angular` выполнить `npm install`, по
 docker compose up --build
 ```
 
-- Сайт на vanilla JS: http://localhost:8080 (по умолчанию работает через Python)
-- Сайт на React: http://localhost:8081
-- Сайт на Vue: http://localhost:8082
-- Сайт на Angular: http://localhost:8083
-- Python API: http://localhost:8000/docs
-- Node API: http://localhost:8002/api/medicines
+- Сайт: http://localhost:8080
+- API: http://localhost:8000/docs
 
-Чтобы сайт работал через Node.js: `API_HOST=backend-node docker compose up --build`
-(в PowerShell: `$env:API_HOST="backend-node"; docker compose up --build`).
-
-Оба бэкенда подключены к одной базе Postgres. Отзыв, оставленный через Python, виден через Node.
 Смена базы делается одной переменной `DATABASE_URL`, код не меняется.
 
-## Python и Node: в чём разница
-
-| | Python (`backend/`) | Node.js (`backend-node/`) |
-|---|---|---|
-| Фреймворк | FastAPI | Express |
-| Работа с базой | SQLAlchemy (ORM: таблицы как классы) | чистый SQL через `node:sqlite` и `pg` |
-| Проверка данных | Pydantic, автоматически по схеме | функция `validateReview` вручную |
-| Документация API | `/docs` генерируется сама | нет |
-| Асинхронность | обычные функции | `async/await` |
-
 ## API
-
-Это контракт. Бэкенды на Node, Go, Java, Rust и PHP должны отдавать то же самое.
 
 | Метод | Путь | Что делает |
 |---|---|---|
@@ -116,26 +68,22 @@ docker compose up --build
 cd tests
 npm install
 npx playwright install chromium
-npx playwright test          # все тесты на Python (сам запустит бэкенд с чистой базой)
-BACKEND=node npx playwright test   # те же тесты на Node.js (PowerShell: $env:BACKEND="node"; npx playwright test)
-FRONTEND=react npx playwright test # те же тесты на React-фронтенде
-FRONTEND=vue npx playwright test   # те же тесты на Vue-фронтенде
-FRONTEND=angular npx playwright test   # те же тесты на Angular-фронтенде
-BACKEND=node FRONTEND=vue npx playwright test   # любая связка
+npx playwright test          # все тесты (сам запустит бэкенд с чистой базой)
 npx playwright test --ui     # окно, где видно, как тесты кликают по сайту
 npx playwright show-report   # HTML-отчёт
 ```
 
 - `specs/catalog.spec.js`: каталог, поиск, категории
 - `specs/medicine.spec.js`: страница лекарства, цены, город, ближайшие аптеки, отзывы, защита от XSS
-- `specs/api.spec.js`: контракт API. Любой новый бэкенд должен проходить эти тесты
+- `specs/api.spec.js`: проверка API
 
 Тесты гоняются на ПК (`desktop`) и на телефоне (`mobile`, Pixel 7).
 Чтобы проверить Docker-версию: `BASE_URL=http://localhost:8080 npx playwright test`.
 
 ## Что дальше
 
-1. Бэкенды на Go, Java, Rust, PHP с тем же API (проверка — те же тесты)
-2. Базы MySQL, Firebird, BerkeleyDB
-3. Реальные фото и цены, админка для аптек
-4. Кыргызский язык интерфейса
+1. Проверить работу с PostgreSQL в Docker
+2. Модерация отзывов и защита от спама
+3. Админка для лекарств, аптек и цен
+4. Настоящие данные: аптеки и цены, описания проверены фармацевтом
+5. Публикация на Render
