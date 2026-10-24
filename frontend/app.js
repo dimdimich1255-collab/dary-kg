@@ -117,13 +117,18 @@ async function renderList() {
   loadGrid();
 }
 
+// Номер последнего запроса списка: опоздавший ответ на старый запрос не должен перезаписать новый
+let gridRequest = 0;
+
 async function loadGrid() {
   const grid = document.getElementById("grid");
   const params = new URLSearchParams();
   if (state.q) params.set("q", state.q);
   if (state.category) params.set("category", state.category);
+  const request = ++gridRequest;
   try {
     const meds = await api(`/api/medicines?${params}`);
+    if (request !== gridRequest) return;
     if (!meds.length) {
       grid.innerHTML = `<p class="muted">Ничего не найдено. Попробуйте другое слово.</p>`;
       return;
@@ -143,6 +148,7 @@ async function loadGrid() {
       </a>
     `).join("");
   } catch (err) {
+    if (request !== gridRequest) return;
     grid.innerHTML = `<p class="error">Не удалось загрузить: ${esc(err.message)}</p>`;
   }
 }
@@ -151,10 +157,13 @@ async function loadGrid() {
 
 async function renderMedicine(id) {
   app.innerHTML = `<p class="muted">Загрузка…</p>`;
+  const myRoute = routeNumber; // если за время запроса пользователь ушёл дальше, ответ выбрасываем
   let m;
   try {
     m = await api(`/api/medicines/${id}?${offerParams()}`);
+    if (myRoute !== routeNumber) return;
   } catch (err) {
+    if (myRoute !== routeNumber) return;
     app.innerHTML = `<p class="error">${esc(err.message)}</p><a href="#/">← К списку</a>`;
     return;
   }
@@ -342,7 +351,10 @@ function setupReviewForm(id) {
 
 // ---------- Маршрутизация по #адресу ----------
 
+let routeNumber = 0; // растёт при каждой смене страницы или города
+
 function route() {
+  routeNumber++;
   const match = location.hash.match(/^#\/medicine\/(\d+)/);
   if (match) renderMedicine(match[1]);
   else renderList();
