@@ -1,0 +1,92 @@
+# Запуск:
+#   docker compose up --build                            — сайты работают через Python
+#   API_HOST=backend-node docker compose up --build      — сайты работают через Node.js
+# Vanilla JS: http://localhost:8080   React: http://localhost:8081
+# Vue:        http://localhost:8082   Angular: http://localhost:8083
+# Оба бэкенда подключены к одной базе Postgres и видят одни и те же отзывы.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dary
+      POSTGRES_PASSWORD: dary
+      POSTGRES_DB: dary
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dary"]
+      interval: 3s
+      retries: 10
+
+  backend:            # Python + FastAPI
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://dary:dary@postgres:5432/dary
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 3s
+      retries: 20
+    ports:
+      - "8000:8000"
+
+  backend-node:       # Node.js + Express
+    build: ./backend-node
+    environment:
+      DATABASE_URL: postgresql://dary:dary@postgres:5432/dary
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:        # ждём, пока Python создаст таблицы и демо-данные, чтобы не заполнить базу дважды
+        condition: service_healthy
+    ports:
+      - "8002:8000"
+
+  frontend:
+    image: nginx:1.27-alpine
+    environment:
+      API_HOST: ${API_HOST:-backend}
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./frontend/templates:/etc/nginx/templates:ro
+    depends_on:
+      - backend
+      - backend-node
+    ports:
+      - "8080:80"
+
+  frontend-react:
+    build: ./frontend-react
+    environment:
+      API_HOST: ${API_HOST:-backend}
+    depends_on:
+      - backend
+      - backend-node
+    ports:
+      - "8081:80"
+
+  frontend-vue:
+    build: ./frontend-vue
+    environment:
+      API_HOST: ${API_HOST:-backend}
+    depends_on:
+      - backend
+      - backend-node
+    ports:
+      - "8082:80"
+
+  frontend-angular:
+    build: ./frontend-angular
+    environment:
+      API_HOST: ${API_HOST:-backend}
+    depends_on:
+      - backend
+      - backend-node
+    ports:
+      - "8083:80"
+
+volumes:
+  pgdata:
