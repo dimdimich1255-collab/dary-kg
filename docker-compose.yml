@@ -20,6 +20,14 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://dary:dary@postgres:5432/dary
+      # Модерация отзывов. Админка: http://localhost:8080/admin.html
+      # Пароль ниже только для локальной проверки. В интернете задай свой: ADMIN_PASSWORD=... docker compose up
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-local-admin}
+      IP_SALT: ${IP_SALT:-local-salt}
+      TRUST_PROXY: "1"
+      # Лимиты отзывов с одного устройства. Для прогона автотестов их поднимают (см. README)
+      REVIEW_LIMIT_10MIN: ${REVIEW_LIMIT_10MIN:-3}
+      REVIEW_LIMIT_DAY: ${REVIEW_LIMIT_DAY:-10}
     depends_on:
       postgres:
         condition: service_healthy

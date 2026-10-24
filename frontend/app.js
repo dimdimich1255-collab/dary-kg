@@ -23,6 +23,7 @@ async function api(path, options) {
     const data = await res.json().catch(() => ({}));
     throw new Error(typeof data.detail === "string" ? data.detail : "Ошибка сервера");
   }
+  if (res.status === 204) return null; // успех без тела (например, жалоба)
   return res.json();
 }
 
@@ -198,6 +199,9 @@ async function renderMedicine(id) {
           ${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-n="${n}" aria-label="${n} из 5">★</button>`).join("")}
         </div>
         <textarea name="text" placeholder="Помогло ли лекарство? Были ли побочные эффекты?" maxlength="2000" required></textarea>
+        <div class="hp" aria-hidden="true"><label>Сайт <input name="website" tabindex="-1" autocomplete="off"></label></div>
+        <p class="muted" style="margin:0;font-size:13px">Отзыв появится на сайте после проверки. Не пишите ссылки и дозировки: это не совет врача.</p>
+        <div class="success" id="form-ok" role="status"></div>
         <div class="error" id="form-error"></div>
         <button id="send-review">Отправить отзыв</button>
       </form>
@@ -275,6 +279,7 @@ async function loadReviews(id) {
           <span class="stars">${stars(r.rating)}</span>
           <span class="muted"> · ${new Date(r.created_at).toLocaleDateString("ru-RU")}</span>
           <p>${esc(r.text)}</p>
+          <button type="button" class="link" data-report="${r.id}">Пожаловаться</button>
         </div>`).join("")
     : `<p class="muted">Будьте первым, кто оставит отзыв.</p>`;
 }
@@ -283,7 +288,21 @@ function setupReviewForm(id) {
   const form = document.getElementById("review-form");
   const rate = document.getElementById("rate");
   const error = document.getElementById("form-error");
+  const ok = document.getElementById("form-ok");
   let rating = 0;
+
+  // Жалоба на отзыв (кнопки создаются заново при каждой загрузке отзывов, поэтому делегирование)
+  document.getElementById("reviews").addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-report]");
+    if (!btn) return;
+    btn.disabled = true;
+    try {
+      await api(`/api/reviews/${btn.dataset.report}/report`, { method: "POST" });
+      btn.textContent = "Жалоба отправлена";
+    } catch {
+      btn.disabled = false;
+    }
+  });
 
   rate.addEventListener("click", (e) => {
     const b = e.target.closest("button");
@@ -295,6 +314,7 @@ function setupReviewForm(id) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     error.textContent = "";
+    ok.textContent = "";
     if (!rating) { error.textContent = "Поставьте оценку от 1 до 5 звёзд"; return; }
     const data = Object.fromEntries(new FormData(form));
     const btn = document.getElementById("send-review");
@@ -302,14 +322,18 @@ function setupReviewForm(id) {
     try {
       await api(`/api/medicines/${id}/reviews`, {
         method: "POST",
-        body: JSON.stringify({ author: data.author, text: data.text, rating }),
+        body: JSON.stringify({ author: data.author, text: data.text, rating, website: data.website }),
       });
       form.reset();
       rating = 0;
       rate.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
-      await loadReviews(id);
+      // Новый отзыв виден только после проверки, поэтому список не обновляем
+      ok.textContent = "Спасибо! Отзыв появится на сайте после проверки.";
     } catch (err) {
-      error.textContent = "Не получилось отправить: проверьте имя (от 2 букв) и текст (от 5 букв).";
+      // Если сервер объяснил причину (ссылки, лимит, повтор) — показываем её
+      error.textContent = err.message === "Ошибка сервера"
+        ? "Не получилось отправить: проверьте имя (от 2 букв) и текст (от 5 букв)."
+        : err.message;
     } finally {
       btn.disabled = false;
     }

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Модерация отзывов — Dary.kg</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <a href="/" class="logo">💊 Dary<span>.kg</span> · модерация</a>
+    <button id="logout" class="ghost" hidden>Выйти</button>
+  </header>
+
+  <main id="admin">
+    <form id="login" class="review-form" style="max-width:360px">
+      <h2 style="margin:0">Вход для модератора</h2>
+      <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" required>
+      <div class="error" id="login-error"></div>
+      <button>Войти</button>
+    </form>
+
+    <section id="panel" hidden>
+      <div class="admin-help">
+        <b>Какие отзывы отклонять:</b>
+        <ul>
+          <li>советы по дозировке или «пил антибиотик от простуды, помогло»;</li>
+          <li>реклама, ссылки, номера телефонов, личные данные;</li>
+          <li>оскорбления и отзывы не по теме.</li>
+        </ul>
+      </div>
+      <div class="admin-tabs" id="tabs"></div>
+      <div id="list"></div>
+    </section>
+  </main>
+
+  <script src="admin.js"></script>
+</body>
+</html>

@@ -38,7 +38,14 @@ module.exports = defineConfig({
     // Бэкенд сам отдаёт и API, и vanilla-фронтенд с одного адреса
     command: `"${python}" -m uvicorn app.main:app --port ${PORT} --app-dir ../backend`,
     url: `http://localhost:${PORT}/api/health`,
-    env: { DATABASE_URL: `sqlite:///${testDb.replace(/\\/g, "/")}` },
+    env: {
+      DATABASE_URL: `sqlite:///${testDb.replace(/\\/g, "/")}`,
+      // Модерация: пароль админки, а IP читаем из X-Forwarded-For, чтобы каждый тест
+      // мог «прийти» с собственного адреса и не упираться в лимиты отзывов
+      ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "пароль-модератора-тест",
+      IP_SALT: "test-salt",
+      TRUST_PROXY: "1",
+    },
     reuseExistingServer: false,
     timeout: 30_000,
   },

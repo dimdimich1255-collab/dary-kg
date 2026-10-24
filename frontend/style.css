@@ -105,6 +105,24 @@ footer { text-align: center; color: var(--muted); font-size: 13px; padding: 24px
 .rate button { background: none; color: #c9cfce; font-size: 28px; padding: 0 2px; }
 .rate button.on { color: var(--star); }
 .error { color: #b3261e; font-size: 14px; }
+.success { color: #0b6b53; font-size: 14px; font-weight: 600; }
+
+/* Скрытое поле-ловушка для ботов: человек его не видит, бот заполняет */
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+button.link { background: none; color: var(--muted); padding: 2px 0; font-size: 13px; font-weight: 400; text-decoration: underline; }
+button.link:disabled { text-decoration: none; cursor: default; }
+
+/* Админка */
+.admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.admin-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px 16px; margin-bottom: 10px; }
+.admin-card .meta { color: var(--muted); font-size: 13px; }
+.admin-card p { margin: 6px 0 10px; white-space: pre-wrap; }
+.admin-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.admin-actions .danger { background: #b3261e; }
+.admin-actions .reject { background: var(--warn); }
+.admin-help { background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.admin-help li { margin: 2px 0; }
 
 @media (max-width: 760px) {
   .detail { grid-template-columns: 1fr; }

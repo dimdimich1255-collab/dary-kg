@@ -1,11 +1,6 @@
 // @ts-check
 const { test, expect } = require("@playwright/test");
-
-// Находим id лекарства по названию через API, чтобы не зависеть от порядка в базе
-async function medicineId(request, name) {
-  const list = await (await request.get(`/api/medicines?q=${encodeURIComponent(name)}`)).json();
-  return list.find((m) => m.name === name).id;
-}
+const { asVisitor, uniqueIp, medicineId, submitReview, approveReview } = require("./helpers");
 
 test.describe("Страница лекарства", () => {
   test("показывает описание и противопоказания", async ({ page, request }) => {
@@ -65,7 +60,12 @@ test.describe("Страница лекарства", () => {
 });
 
 test.describe("Отзывы", () => {
-  test("отзыв сохраняется и виден после перезагрузки", async ({ page, request }, testInfo) => {
+  // Лимиты считаются по IP, поэтому каждый тест «приходит» с собственного адреса
+  test.beforeEach(async ({ page }) => {
+    await page.setExtraHTTPHeaders(asVisitor(uniqueIp()));
+  });
+
+  test("отзыв появляется после проверки модератором", async ({ page, request }, testInfo) => {
     const id = await medicineId(request, "Цетиризин");
     const author = `Тестер ${testInfo.project.name}`;
     const text = `Помог от аллергии на цветение, проверка ${Date.now()}`;
@@ -76,15 +76,45 @@ test.describe("Отзывы", () => {
     await page.getByPlaceholder(/Помогло ли лекарство/).fill(text);
     await page.getByRole("button", { name: "Отправить отзыв" }).click();
 
+    // Автор видит благодарность, форма очистилась, но отзыв пока не опубликован
+    await expect(page.getByText("Отзыв появится на сайте после проверки.", { exact: false }).first()).toBeVisible();
+    await expect(page.getByRole("status")).toContainText("Спасибо");
+    await expect(page.getByPlaceholder("Ваше имя")).toHaveValue("");
+    await expect(page.getByTestId("review").filter({ hasText: text })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId("review").filter({ hasText: text })).toHaveCount(0);
+
+    // Модератор одобрил: отзыв виден всем
+    await approveReview(request, text);
+    await page.reload();
     const review = page.getByTestId("review").filter({ hasText: text });
     await expect(review).toBeVisible();
     await expect(review).toContainText(author);
     await expect(review).toContainText("★★★★☆");
-    await expect(page.getByPlaceholder("Ваше имя")).toHaveValue(""); // форма очистилась
+  });
 
-    // Другой пользователь (новая страница) тоже видит отзыв
-    await page.reload();
-    await expect(page.getByTestId("review").filter({ hasText: text })).toBeVisible();
+  test("ссылка в отзыве не принимается, причина показана", async ({ page, request }) => {
+    const id = await medicineId(request, "Смекта");
+    await page.goto(`/#/medicine/${id}`);
+    await page.getByPlaceholder("Ваше имя").fill("Спамер");
+    await page.getByRole("button", { name: "5 из 5" }).click();
+    await page.getByPlaceholder(/Помогло ли лекарство/).fill("Лучшие цены на www.pharma-shop.kg");
+    await page.getByRole("button", { name: "Отправить отзыв" }).click();
+
+    await expect(page.getByText("Ссылки в отзывах запрещены")).toBeVisible();
+    await expect(page.getByRole("status")).toBeEmpty();
+  });
+
+  test("на одобренный отзыв можно пожаловаться", async ({ page, request }) => {
+    const id = await medicineId(request, "Лоратадин");
+    const text = `Отзыв для жалобы ${Date.now()}`;
+    await submitReview(request, id, { author: "Автор", rating: 3, text });
+    await approveReview(request, text);
+
+    await page.goto(`/#/medicine/${id}`);
+    const review = page.getByTestId("review").filter({ hasText: text });
+    await review.getByRole("button", { name: "Пожаловаться" }).click();
+    await expect(review.getByRole("button", { name: "Жалоба отправлена" })).toBeDisabled();
   });
 
   test("без звёзд отзыв не отправляется", async ({ page, request }) => {
@@ -107,7 +137,11 @@ test.describe("Отзывы", () => {
     await page.getByRole("button", { name: "1 из 5" }).click();
     await page.getByPlaceholder(/Помогло ли лекарство/).fill(evil);
     await page.getByRole("button", { name: "Отправить отзыв" }).click();
+    await expect(page.getByRole("status")).toContainText("Спасибо");
 
+    // Даже одобренный модератором, вредный код показывается просто текстом
+    await approveReview(request, evil);
+    await page.reload();
     await expect(page.getByTestId("review").filter({ hasText: evil })).toBeVisible();
     await expect(page.locator("#reviews img")).toHaveCount(0);
     expect(await page.evaluate(() => window.hacked)).toBeUndefined();

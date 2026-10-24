@@ -6,7 +6,7 @@ import random
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Medicine, Offer, Pharmacy, Review
+from .models import APPROVED, Medicine, Offer, Pharmacy, Review
 
 MEDICINES = [
     # name, generic, category, form, purpose, contraindications, prescription, base price (сом)
@@ -131,6 +131,6 @@ def seed_if_empty(db: Session):
                              in_stock=rnd.random() > 0.15))
         if i < 3:
             for author, rating, text in DEMO_REVIEWS:
-                db.add(Review(medicine=m, author=author, rating=rating, text=text))
+                db.add(Review(medicine=m, author=author, rating=rating, text=text, status=APPROVED))
 
     db.commit()

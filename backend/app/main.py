@@ -1,23 +1,27 @@
 import math
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, get_db, SessionLocal
-from .models import Medicine, Offer, Pharmacy, Review
+from .migrate import add_missing_review_columns
+from .moderation import LIMIT_10MIN, LIMIT_DAY, REPORTS_TO_HIDE, has_link, ip_hash, require_admin
+from .models import APPROVED, PENDING, REJECTED, Medicine, Offer, Pharmacy, Review, ReviewReport, now_utc
 from .seed import seed_if_empty
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    add_missing_review_columns(engine)
     with SessionLocal() as db:
         seed_if_empty(db)
     yield
@@ -81,10 +85,28 @@ class ReviewOut(BaseModel):
     created_at: datetime
 
 
+class SubmittedReview(ReviewOut):
+    status: str  # после отправки всегда «pending»: отзыв ждёт проверки
+
+
+class AdminReview(BaseModel):
+    id: int
+    medicine_id: int
+    medicine_name: str
+    author: str
+    rating: int
+    text: str
+    created_at: datetime
+    status: str
+    reports: int
+
+
 class ReviewIn(BaseModel):
     author: str = Field(min_length=2, max_length=60)
     rating: int = Field(ge=1, le=5)
     text: str = Field(min_length=5, max_length=2000)
+    # Скрытое поле-ловушка: человек его не видит и не заполняет, а бот заполняет всё подряд
+    website: str = Field(default="", max_length=200)
 
     @field_validator("author", "text")
     @classmethod
@@ -117,7 +139,7 @@ def stats_for(db: Session, medicine_ids: list[int]):
         mid: (avg, cnt)
         for mid, avg, cnt in db.execute(
             select(Review.medicine_id, func.avg(Review.rating), func.count(Review.id))
-            .where(Review.medicine_id.in_(medicine_ids))
+            .where(Review.medicine_id.in_(medicine_ids), Review.status == APPROVED)
             .group_by(Review.medicine_id)
         ).all()
     }
@@ -200,19 +222,124 @@ def list_reviews(medicine_id: int, db: Session = Depends(get_db)):
     if not db.get(Medicine, medicine_id):
         raise HTTPException(404, "Лекарство не найдено")
     return db.scalars(
-        select(Review).where(Review.medicine_id == medicine_id).order_by(Review.created_at.desc())
+        select(Review)
+        .where(Review.medicine_id == medicine_id, Review.status == APPROVED)
+        .order_by(Review.created_at.desc(), Review.id.desc())
     ).all()
 
 
-@app.post("/api/medicines/{medicine_id}/reviews", response_model=ReviewOut, status_code=201)
-def add_review(medicine_id: int, body: ReviewIn, db: Session = Depends(get_db)):
+@app.post("/api/medicines/{medicine_id}/reviews", response_model=SubmittedReview, status_code=201)
+def add_review(medicine_id: int, body: ReviewIn, request: Request, db: Session = Depends(get_db)):
     if not db.get(Medicine, medicine_id):
         raise HTTPException(404, "Лекарство не найдено")
-    review = Review(medicine_id=medicine_id, **body.model_dump())
+
+    # Ловушка для ботов: притворяемся, что всё получилось, но ничего не сохраняем
+    if body.website:
+        return SubmittedReview(id=0, author=body.author, rating=body.rating, text=body.text,
+                               created_at=now_utc(), status=PENDING)
+
+    if has_link(body.author, body.text):
+        raise HTTPException(422, "Ссылки в отзывах запрещены. Уберите адрес сайта из текста.")
+
+    who = ip_hash(request)
+    now = now_utc()
+
+    def count_since(delta: timedelta) -> int:
+        return db.scalar(select(func.count(Review.id)).where(
+            Review.ip_hash == who, Review.created_at >= now - delta)) or 0
+
+    if count_since(timedelta(minutes=10)) >= LIMIT_10MIN or count_since(timedelta(days=1)) >= LIMIT_DAY:
+        raise HTTPException(429, "Слишком много отзывов с вашего устройства. Попробуйте позже.")
+
+    if db.scalar(select(Review.id).where(
+            Review.ip_hash == who, Review.medicine_id == medicine_id, Review.text == body.text).limit(1)):
+        raise HTTPException(409, "Вы уже отправляли такой отзыв.")
+
+    review = Review(medicine_id=medicine_id, author=body.author, rating=body.rating, text=body.text,
+                    status=PENDING, ip_hash=who)
     db.add(review)
     db.commit()
     db.refresh(review)
+    return SubmittedReview(id=review.id, author=review.author, rating=review.rating, text=review.text,
+                           created_at=review.created_at, status=review.status)
+
+
+@app.post("/api/reviews/{review_id}/report", status_code=204)
+def report_review(review_id: int, request: Request, db: Session = Depends(get_db)):
+    """Пожаловаться на отзыв. После нескольких жалоб отзыв скрывается до проверки."""
+    review = db.get(Review, review_id)
+    if not review or review.status != APPROVED:
+        raise HTTPException(404, "Отзыв не найден")
+
+    who = ip_hash(request)
+    if db.scalar(select(ReviewReport.id).where(
+            ReviewReport.review_id == review_id, ReviewReport.ip_hash == who).limit(1)) is None:
+        db.add(ReviewReport(review_id=review_id, ip_hash=who))
+        review.reports += 1
+        if review.reports >= REPORTS_TO_HIDE:
+            review.status = PENDING
+        db.commit()
+    return Response(status_code=204)  # повторную жалобу с того же устройства молча игнорируем
+
+
+# ---------- Админка (нужен пароль ADMIN_PASSWORD) ----------
+
+def admin_view(review: Review, medicine_name: str) -> dict:
+    return {
+        "id": review.id, "medicine_id": review.medicine_id, "medicine_name": medicine_name,
+        "author": review.author, "rating": review.rating, "text": review.text,
+        "created_at": review.created_at, "status": review.status, "reports": review.reports,
+    }
+
+
+def get_review_or_404(db: Session, review_id: int) -> Review:
+    review = db.get(Review, review_id)
+    if not review:
+        raise HTTPException(404, "Отзыв не найден")
     return review
+
+
+@app.get("/api/admin/reviews", response_model=list[AdminReview], dependencies=[Depends(require_admin)])
+def admin_list_reviews(
+    status: Literal["pending", "approved", "rejected", "reported", "all"] = "pending",
+    db: Session = Depends(get_db),
+):
+    stmt = select(Review, Medicine.name).join(Medicine, Medicine.id == Review.medicine_id)
+    if status == "reported":
+        stmt = stmt.where(Review.reports > 0)
+    elif status != "all":
+        stmt = stmt.where(Review.status == status)
+    rows = db.execute(stmt.order_by(Review.created_at.desc(), Review.id.desc())).all()
+    return [admin_view(r, name) for r, name in rows]
+
+
+@app.post("/api/admin/reviews/{review_id}/approve", response_model=AdminReview,
+          dependencies=[Depends(require_admin)])
+def admin_approve(review_id: int, db: Session = Depends(get_db)):
+    review = get_review_or_404(db, review_id)
+    review.status = APPROVED
+    review.reports = 0  # проверено вручную: старые жалобы больше не считаются
+    db.execute(delete(ReviewReport).where(ReviewReport.review_id == review_id))
+    db.commit()
+    return admin_view(review, review.medicine.name)
+
+
+@app.post("/api/admin/reviews/{review_id}/reject", response_model=AdminReview,
+          dependencies=[Depends(require_admin)])
+def admin_reject(review_id: int, db: Session = Depends(get_db)):
+    review = get_review_or_404(db, review_id)
+    review.status = REJECTED
+    db.commit()
+    return admin_view(review, review.medicine.name)
+
+
+@app.delete("/api/admin/reviews/{review_id}", status_code=204, dependencies=[Depends(require_admin)])
+def admin_delete(review_id: int, db: Session = Depends(get_db)):
+    review = get_review_or_404(db, review_id)
+    db.execute(delete(ReviewReport).where(ReviewReport.review_id == review_id))
+    db.delete(review)
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.get("/api/pharmacies", response_model=list[PharmacyOut])

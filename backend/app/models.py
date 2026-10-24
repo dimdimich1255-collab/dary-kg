@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -67,6 +67,10 @@ class Offer(Base):
     pharmacy: Mapped[Pharmacy] = relationship(back_populates="offers")
 
 
+# Статусы отзыва: новый отзыв ждёт проверки, на сайте виден только одобренный
+PENDING, APPROVED, REJECTED = "pending", "approved", "rejected"
+
+
 class Review(Base):
     """Отзыв пользователя о лекарстве."""
 
@@ -78,5 +82,22 @@ class Review(Base):
     rating: Mapped[int] = mapped_column(Integer)  # 1..5
     text: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    # server_default нужен, чтобы отзывы, созданные до модерации, остались видимыми
+    status: Mapped[str] = mapped_column(String(20), default=PENDING, server_default=APPROVED, index=True)
+    reports: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # жалобы
+    # Хеш IP автора: хватает для лимитов, но по нему нельзя узнать человека
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     medicine: Mapped[Medicine] = relationship(back_populates="reviews")
+
+
+class ReviewReport(Base):
+    """Жалоба на отзыв. Один человек (по хешу IP) может пожаловаться на отзыв только раз."""
+
+    __tablename__ = "review_reports"
+    __table_args__ = (UniqueConstraint("review_id", "ip_hash"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    review_id: Mapped[int] = mapped_column(ForeignKey("reviews.id", ondelete="CASCADE"), index=True)
+    ip_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
